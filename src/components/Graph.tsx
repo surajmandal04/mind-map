@@ -6,11 +6,8 @@ import { Node, Link, NODE_TYPES } from '../types';
 const MIN_NODE_SIZE = 60;
 const PADDING = 20;
 const ARROW_SIZE = 10;
-const TRANSITION_DURATION = 300;
-
-// Layout constants for initial positioning only
-const HORIZONTAL_SPACING = 200;
-const VERTICAL_SPACING = 150;
+const VERTICAL_GAP = 150;
+const HORIZONTAL_OFFSET = 300;
 
 export const Graph: React.FC = () => {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -40,18 +37,70 @@ export const Graph: React.FC = () => {
   };
 
   const getNodeTypeInfo = (typeId: string) => {
-    // First check custom node types
     const customType = nodeTypes.find(t => t.id === typeId);
-    if (customType) {
-      return customType;
-    }
-    // Then check predefined node types
+    if (customType) return customType;
     const predefinedType = NODE_TYPES.find(t => t.id === typeId);
-    if (predefinedType) {
-      return predefinedType;
-    }
-    // Fallback to default
+    if (predefinedType) return predefinedType;
     return NODE_TYPES[0];
+  };
+
+  const organizeNodesVertically = () => {
+    // Create a map to store node chains
+    const chains = new Map<string, Node[]>();
+    const processedNodes = new Set<string>();
+
+    // Helper function to find root nodes (nodes with no incoming links)
+    const findRootNodes = () => {
+      const targetNodes = new Set(links.map(l => l.target));
+      return nodes.filter(node => !targetNodes.has(node.id));
+    };
+
+    // Helper function to build chain from root node
+    const buildChain = (startNode: Node) => {
+      const chain: Node[] = [startNode];
+      let currentNode = startNode;
+      
+      while (true) {
+        const nextLink = links.find(l => l.source === currentNode.id);
+        if (!nextLink) break;
+        
+        const nextNode = nodes.find(n => n.id === nextLink.target);
+        if (!nextNode || processedNodes.has(nextNode.id)) break;
+        
+        chain.push(nextNode);
+        processedNodes.add(nextNode.id);
+        currentNode = nextNode;
+      }
+      
+      return chain;
+    };
+
+    // Process all root nodes and their chains
+    const rootNodes = findRootNodes();
+    rootNodes.forEach((rootNode, index) => {
+      if (!processedNodes.has(rootNode.id)) {
+        processedNodes.add(rootNode.id);
+        const chain = buildChain(rootNode);
+        chains.set(rootNode.id, chain);
+      }
+    });
+
+    // Position nodes in vertical chains
+    let currentX = HORIZONTAL_OFFSET;
+    chains.forEach((chain) => {
+      chain.forEach((node, index) => {
+        node.x = currentX;
+        node.y = VERTICAL_GAP * (index + 1);
+      });
+      currentX += HORIZONTAL_OFFSET;
+    });
+
+    // Handle remaining nodes that aren't part of any chain
+    const unprocessedNodes = nodes.filter(node => !processedNodes.has(node.id));
+    unprocessedNodes.forEach((node, index) => {
+      node.x = currentX;
+      node.y = VERTICAL_GAP * (index + 1);
+    });
   };
 
   useEffect(() => {
@@ -60,6 +109,9 @@ export const Graph: React.FC = () => {
     if (simulationRef.current) {
       simulationRef.current.stop();
     }
+
+    // Organize nodes vertically before rendering
+    organizeNodesVertically();
 
     const container = svgRef.current.parentElement;
     const width = container?.clientWidth || window.innerWidth;
@@ -118,14 +170,6 @@ export const Graph: React.FC = () => {
       .attr('height', height)
       .attr('fill', 'url(#grid-pattern)');
 
-    // Initialize positions for new nodes only
-    nodes.forEach((node, i) => {
-      if (typeof node.x === 'undefined' || typeof node.y === 'undefined') {
-        node.x = (i % 3) * HORIZONTAL_SPACING + width / 4;
-        node.y = Math.floor(i / 3) * VERTICAL_SPACING + VERTICAL_SPACING;
-      }
-    });
-
     // Create links
     const validLinks = links.map(link => ({
       source: nodes.find(n => n.id === link.source)!,
@@ -136,18 +180,15 @@ export const Graph: React.FC = () => {
     const simulation = d3.forceSimulation(nodes as d3.SimulationNodeDatum[])
       .force('link', d3.forceLink(validLinks)
         .id((d: any) => d.id)
-        .distance(0)
-        .strength(0)) // No force between linked nodes
-      .force('charge', null) // No charge force
-      .force('collide', null) // No collision force
-      .force('x', null) // No x force
-      .force('y', null) // No y force
-      .alpha(0) // Set alpha to 0 to prevent automatic movement
-      .alphaTarget(0); // Set alpha target to 0
+        .distance(VERTICAL_GAP)
+        .strength(0.1))
+      .force('charge', d3.forceManyBody().strength(-1000))
+      .force('collide', d3.forceCollide().radius(80))
+      .alpha(0.1)
+      .alphaDecay(0.02);
 
     simulationRef.current = simulation;
 
-    // Create curved links with arrows
     const link = g.selectAll('.link')
       .data(validLinks)
       .enter()
@@ -157,7 +198,6 @@ export const Graph: React.FC = () => {
       .style('stroke', '#999')
       .style('stroke-width', 2)
       .style('fill', 'none')
-      .style('cursor', 'pointer')
       .style('opacity', 0.6)
       .on('mouseover', function() {
         d3.select(this)
@@ -301,8 +341,10 @@ export const Graph: React.FC = () => {
       d3.select(this).style('cursor', 'grab');
     }
 
-    // Update link positions
-    simulation.on('tick', updateLinks);
+    simulation.on('tick', () => {
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+      updateLinks();
+    });
 
     svg.on('mousemove', (event: MouseEvent) => {
       if (linkingNode && tempLine) {
