@@ -38,10 +38,8 @@ export const NODE_TYPES: NodeType[] = [
   { id: 'note', name: 'Note', color: '#F1C40F' }
 ];
 
-// Utility function to generate a unique ID
 export const generateId = () => crypto.randomUUID();
 
-// Utility function to create a new node type
 export const createNodeType = (name: string): NodeType => ({
   id: name.toLowerCase(),
   name: name.charAt(0).toUpperCase() + name.slice(1),

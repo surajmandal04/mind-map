@@ -50,7 +50,6 @@ export const useMindMapStore = create<MindMapStore>()(
           if (state.links.some((l) => l.source === source && l.target === target)) {
             return state;
           }
-          // Verify both nodes exist before creating the link
           const sourceNode = state.nodes.find(n => n.id === source);
           const targetNode = state.nodes.find(n => n.id === target);
           if (!sourceNode || !targetNode) return state;
@@ -67,11 +66,8 @@ export const useMindMapStore = create<MindMapStore>()(
 
       removeNode: (id) =>
         set((state) => {
-          // Remove the node and its associated links
           const updatedNodes = state.nodes.filter((n) => n.id !== id);
           const updatedLinks = state.links.filter((l) => l.source !== id && l.target !== id);
-          
-          // Clear selected node if it's the one being removed
           const updatedSelectedNode = state.selectedNode?.id === id ? null : state.selectedNode;
           
           return {
@@ -82,9 +78,20 @@ export const useMindMapStore = create<MindMapStore>()(
         }),
 
       updateNode: (id, updates) =>
-        set((state) => ({
-          nodes: state.nodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
-        })),
+        set((state) => {
+          const updatedNodes = state.nodes.map((n) => 
+            n.id === id ? { ...n, ...updates } : n
+          );
+          
+          const updatedSelectedNode = state.selectedNode?.id === id
+            ? { ...state.selectedNode, ...updates }
+            : state.selectedNode;
+          
+          return {
+            nodes: updatedNodes,
+            selectedNode: updatedSelectedNode
+          };
+        }),
 
       setSelectedNode: (node) => set({ selectedNode: node }),
 
@@ -120,20 +127,17 @@ export const useMindMapStore = create<MindMapStore>()(
           const nodeTexts = new Set(state.nodeHistory.nodeTexts);
           const markupPatterns = new Set(state.nodeHistory.markupPatterns);
 
-          // Extract individual node texts and add to history
           const parts = text.split('->').map(p => p.trim());
           parts.forEach(part => {
             const cleanText = part.includes(':') ? part.split(':')[1].trim() : part;
             nodeTexts.add(cleanText);
           });
 
-          // Extract markup patterns (if any)
           const pattern = text.includes('->') ? text : '';
           if (pattern) {
             markupPatterns.add(pattern);
           }
 
-          // Convert sets back to arrays and limit size
           const newNodeTexts = Array.from(nodeTexts).slice(0, MAX_HISTORY_ITEMS);
           const newMarkupPatterns = Array.from(markupPatterns).slice(0, MAX_HISTORY_ITEMS);
 
@@ -153,6 +157,7 @@ export const useMindMapStore = create<MindMapStore>()(
           ...node,
           x: node.x || 0,
           y: node.y || 0,
+          details: node.details || '',
         })),
         links: state.links,
         nodeTypes: state.nodeTypes,
@@ -164,7 +169,7 @@ export const useMindMapStore = create<MindMapStore>()(
 
 export const clearMindMapStorage = () => localStorage.removeItem('mind-map-storage');
 
-export const exportMindMapData = (): GraphData => {
+export const exportMindMapData = () => {
   const state = useMindMapStore.getState();
   return {
     nodes: state.nodes.map(node => ({
