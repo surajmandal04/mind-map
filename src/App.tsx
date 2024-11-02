@@ -1,7 +1,7 @@
 import React from 'react';
-import { Graph } from './components/Graph';
-import { NodePanel } from './components/NodePanel';
-import { NodeDetails } from './components/NodeDetails';
+import Graph from './components/Graph';
+import NodePanel from './components/NodePanel';
+import NodeDetails from './components/NodeDetails';
 import { Brain } from 'lucide-react';
 
 function App() {

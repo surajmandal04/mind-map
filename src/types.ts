@@ -3,7 +3,8 @@ import { generateColorHSL } from './utils';
 export interface Node {
   id: string;
   text: string;
-  type: string;
+  tags: string[];
+  synonyms: string[];
   details?: string;
   x?: number;
   y?: number;
@@ -13,7 +14,6 @@ export interface Link {
   source: string;
   target: string;
   distance: number;
-  type?: string;
 }
 
 export interface GraphData {

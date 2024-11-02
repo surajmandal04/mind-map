@@ -5,6 +5,7 @@ import { GraphData, Node, Link, NodeType, NODE_TYPES } from './types';
 interface NodeHistory {
   nodeTexts: string[];
   markupPatterns: string[];
+  synonyms: string[];
 }
 
 interface MindMapStore {
@@ -22,7 +23,7 @@ interface MindMapStore {
   updateNodeType: (id: string, updates: Partial<NodeType>) => void;
   removeNodeType: (id: string) => void;
   cleanupInvalidLinks: () => void;
-  addToHistory: (text: string) => void;
+  addToHistory: (text: string, synonyms?: string[]) => void;
 }
 
 const MAX_HISTORY_ITEMS = 50;
@@ -36,12 +37,19 @@ export const useMindMapStore = create<MindMapStore>()(
       nodeTypes: NODE_TYPES,
       nodeHistory: {
         nodeTexts: [],
-        markupPatterns: []
+        markupPatterns: [],
+        synonyms: []
       },
 
       addNode: (node) =>
         set((state) => {
-          if (state.nodes.some((n) => n.text === node.text)) return state;
+          // Check if a node with same text (case insensitive) exists
+          if (state.nodes.some((n) => 
+            n.text.toLowerCase() === node.text.toLowerCase() ||
+            n.synonyms.some(s => s.toLowerCase() === node.text.toLowerCase())
+          )) {
+            return state;
+          }
           return { nodes: [...state.nodes, { ...node, x: node.x, y: node.y }] };
         }),
 
@@ -79,6 +87,16 @@ export const useMindMapStore = create<MindMapStore>()(
 
       updateNode: (id, updates) =>
         set((state) => {
+          // If updating text, check for duplicates (case insensitive)
+          if (updates.text) {
+            const existingNode = state.nodes.find(n => 
+              n.id !== id && 
+              (n.text.toLowerCase() === updates.text?.toLowerCase() ||
+               n.synonyms.some(s => s.toLowerCase() === updates.text?.toLowerCase()))
+            );
+            if (existingNode) return state;
+          }
+
           const updatedNodes = state.nodes.map((n) => 
             n.id === id ? { ...n, ...updates } : n
           );
@@ -122,15 +140,20 @@ export const useMindMapStore = create<MindMapStore>()(
           return { links: validLinks };
         }),
 
-      addToHistory: (text: string) =>
+      addToHistory: (text: string, synonyms: string[] = []) =>
         set((state) => {
           const nodeTexts = new Set(state.nodeHistory.nodeTexts);
           const markupPatterns = new Set(state.nodeHistory.markupPatterns);
+          const allSynonyms = new Set(state.nodeHistory.synonyms);
 
           const parts = text.split('->').map(p => p.trim());
           parts.forEach(part => {
             const cleanText = part.includes(':') ? part.split(':')[1].trim() : part;
             nodeTexts.add(cleanText);
+          });
+
+          synonyms.forEach(synonym => {
+            allSynonyms.add(synonym);
           });
 
           const pattern = text.includes('->') ? text : '';
@@ -140,11 +163,13 @@ export const useMindMapStore = create<MindMapStore>()(
 
           const newNodeTexts = Array.from(nodeTexts).slice(0, MAX_HISTORY_ITEMS);
           const newMarkupPatterns = Array.from(markupPatterns).slice(0, MAX_HISTORY_ITEMS);
+          const newSynonyms = Array.from(allSynonyms).slice(0, MAX_HISTORY_ITEMS);
 
           return {
             nodeHistory: {
               nodeTexts: newNodeTexts,
-              markupPatterns: newMarkupPatterns
+              markupPatterns: newMarkupPatterns,
+              synonyms: newSynonyms
             }
           };
         }),
@@ -158,6 +183,8 @@ export const useMindMapStore = create<MindMapStore>()(
           x: node.x || 0,
           y: node.y || 0,
           details: node.details || '',
+          tags: node.tags || [],
+          synonyms: node.synonyms || []
         })),
         links: state.links,
         nodeTypes: state.nodeTypes,
@@ -194,6 +221,8 @@ export const importMindMapData = (data: GraphData) => {
       ...node,
       x: node.x || 0,
       y: node.y || 0,
+      tags: node.tags || [],
+      synonyms: node.synonyms || []
     });
   });
   

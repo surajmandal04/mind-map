@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { X, Type, Tag, AlignLeft } from 'lucide-react';
 import { useMindMapStore } from '../store';
-import { NODE_TYPES } from '../types';
 
-export const NodeDetails: React.FC = () => {
-  const { selectedNode, updateNode, removeNode, setSelectedNode, nodeTypes } = useMindMapStore();
+export default function NodeDetails() {
+  const { selectedNode, updateNode, removeNode, setSelectedNode } = useMindMapStore();
+  const [tagInput, setTagInput] = useState('');
 
   if (!selectedNode) return null;
 
@@ -12,8 +12,39 @@ export const NodeDetails: React.FC = () => {
     updateNode(selectedNode.id, { [field]: value });
   };
 
+  const handleTagsChange = (value: string) => {
+    // Split by commas and clean up whitespace
+    const tags = value.split(',')
+      .map(tag => tag.trim().toLowerCase())
+      .filter(tag => tag.length > 0);
+    
+    // Remove duplicates
+    const uniqueTags = Array.from(new Set(tags));
+    
+    updateNode(selectedNode.id, { tags: uniqueTags });
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const newTag = tagInput.trim().toLowerCase();
+      if (newTag) {
+        const currentTags = selectedNode.tags || [];
+        if (!currentTags.includes(newTag)) {
+          handleTagsChange([...currentTags, newTag].join(','));
+        }
+        setTagInput('');
+      }
+    }
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    const currentTags = selectedNode.tags || [];
+    handleTagsChange(currentTags.filter(tag => tag !== tagToRemove).join(','));
+  };
+
   return (
-    <div className="fixed right-0 top-0 h-full w-96 bg-white shadow-xl overflow-y-auto">
+    <div className="fixed left-0 top-0 h-full w-96 bg-white shadow-xl overflow-y-auto">
       <div className="sticky top-0 bg-white z-10 border-b">
         <div className="flex justify-between items-center p-4">
           <h2 className="text-xl font-bold text-gray-900">Node Details</h2>
@@ -43,23 +74,49 @@ export const NodeDetails: React.FC = () => {
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="nodeType" className="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <label htmlFor="nodeTags" className="flex items-center gap-2 text-sm font-medium text-gray-700">
             <Tag className="w-4 h-4" />
-            Type
+            Tags
           </label>
-          <select
-            id="nodeType"
-            value={selectedNode.type}
-            onChange={(e) => handleInputChange('type', e.target.value)}
-            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-          >
-            {nodeTypes.map(type => (
-              <option key={type.id} value={type.id}>{type.name}</option>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {(selectedNode.tags || []).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 text-blue-800 text-sm"
+              >
+                {tag}
+                <button
+                  onClick={() => removeTag(tag)}
+                  className="w-4 h-4 rounded-full hover:bg-blue-200 flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </span>
             ))}
-          </select>
-          <div 
-            className="h-2 w-full rounded-full mt-1"
-            style={{ backgroundColor: nodeTypes.find(t => t.id === selectedNode.type)?.color }}
+          </div>
+          <input
+            id="nodeTags"
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={handleTagInputKeyDown}
+            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+            placeholder="Add tags (press Enter or comma to add)..."
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="nodeSynonyms" className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <AlignLeft className="w-4 h-4" />
+            Synonyms
+          </label>
+          <input
+            id="nodeSynonyms"
+            type="text"
+            value={selectedNode.synonyms || ''}
+            onChange={(e) => handleInputChange('synonyms', e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+            placeholder="Add synonyms (comma-separated)..."
           />
         </div>
 
@@ -92,4 +149,4 @@ export const NodeDetails: React.FC = () => {
       </div>
     </div>
   );
-};
+}

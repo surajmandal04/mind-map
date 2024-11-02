@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PlusCircle, Search, Edit2, Link, Download, Upload } from 'lucide-react';
 import { useMindMapStore } from '../store';
-import { NODE_TYPES, generateId, createNodeType } from '../types';
+import { generateId } from '../types';
 import { exportMindMapData, importMindMapData } from '../store';
 
 interface Suggestion {
@@ -9,10 +9,9 @@ interface Suggestion {
   value: string;
 }
 
-export const NodePanel: React.FC = () => {
+export default function NodePanel() {
   const [input, setInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedType, setSelectedType] = useState('information');
   const [linkingFrom, setLinkingFrom] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -22,65 +21,42 @@ export const NodePanel: React.FC = () => {
     nodes, 
     addNode, 
     addLink, 
-    setSelectedNode, 
-    addNodeType, 
-    nodeTypes,
+    setSelectedNode,
     nodeHistory,
     addToHistory 
   } = useMindMapStore();
 
-  const markupPatterns = [
-    'condition:if x > 0',
-    'task:complete project',
-    'idea:new feature',
-    'milestone:phase 1',
-    'resource:team member',
-    'goal:increase sales'
-  ];
-
   useEffect(() => {
-    if (input) {
+    if (input && showSuggestions) {
       const lowerInput = input.toLowerCase();
       
-      // Get suggestions from current nodes
       const nodeSuggestions = nodes
         .filter(node => node.text.toLowerCase().includes(lowerInput))
         .map(node => ({ type: 'node' as const, value: node.text }));
 
-      // Get suggestions from node history
       const historySuggestions = nodeHistory.nodeTexts
         .filter(text => text.toLowerCase().includes(lowerInput))
         .map(text => ({ type: 'history' as const, value: text }));
 
-      // Get suggestions from markup patterns history
       const markupSuggestions = nodeHistory.markupPatterns
         .filter(pattern => pattern.toLowerCase().includes(lowerInput))
         .map(pattern => ({ type: 'markup' as const, value: pattern }));
 
-      // Get suggestions from predefined markup patterns
-      const patternSuggestions = markupPatterns
-        .filter(pattern => pattern.toLowerCase().includes(lowerInput))
-        .map(pattern => ({ type: 'pattern' as const, value: pattern }));
-
-      // Combine and deduplicate suggestions
       const allSuggestions = [
         ...nodeSuggestions,
         ...historySuggestions,
-        ...markupSuggestions,
-        ...patternSuggestions
+        ...markupSuggestions
       ];
 
-      // Remove duplicates based on value
       const uniqueSuggestions = Array.from(
         new Map(allSuggestions.map(item => [item.value, item])).values()
       );
 
       setSuggestions(uniqueSuggestions);
-      setShowSuggestions(true);
     } else {
-      setShowSuggestions(false);
+      setSuggestions([]);
     }
-  }, [input, nodes, nodeHistory]);
+  }, [input, nodes, nodeHistory, showSuggestions]);
 
   const handleSuggestionClick = (suggestion: Suggestion) => {
     setInput(suggestion.value);
@@ -96,73 +72,65 @@ export const NodePanel: React.FC = () => {
     // Add to history before processing
     addToHistory(input);
     
-    const parts = input.split('->').map(p => p.trim());
+    const lines = input.split('\n').filter(line => line.trim());
     
-    if (parts.length >= 2) {
-      const createdNodes = parts.map(part => {
-        let nodeText = part;
-        let nodeType = selectedType;
+    lines.forEach(line => {
+      const parts = line.split('->').map(p => p.trim());
+      
+      if (parts.length >= 2) {
+        const createdNodes = parts.map(part => {
+          let nodeText = part;
+          let tags: string[] = [];
 
-        if (part.includes(':')) {
-          const [typeStr, textStr] = part.split(':');
-          const typeId = typeStr.trim().toLowerCase();
-          nodeText = textStr.trim();
-
-          if (!nodeTypes.some(t => t.id === typeId)) {
-            const newNodeType = createNodeType(typeStr.trim());
-            addNodeType(newNodeType);
-            nodeType = newNodeType.id;
-          } else {
-            nodeType = typeId;
+          if (part.includes(':')) {
+            const [tagStr, textStr] = part.split(':');
+            nodeText = textStr.trim();
+            tags = [tagStr.toLowerCase().trim()];
           }
+
+          let existingNode = nodes.find(n => n.text.toLowerCase() === nodeText.toLowerCase());
+          if (!existingNode) {
+            const newNode = {
+              id: generateId(),
+              text: nodeText,
+              tags: tags,
+              x: Math.random() * 500,
+              y: Math.random() * 500
+            };
+            addNode(newNode);
+            return newNode;
+          }
+          return existingNode;
+        });
+
+        for (let i = 0; i < createdNodes.length - 1; i++) {
+          const sourceNode = createdNodes[i];
+          const targetNode = createdNodes[i + 1];
+          addLink(sourceNode.id, targetNode.id);
+        }
+      } else {
+        let nodeText = input;
+        let tags: string[] = [];
+
+        if (input.includes(':')) {
+          const [tagStr, textStr] = input.split(':');
+          nodeText = textStr.trim();
+          tags = [tagStr.toLowerCase().trim()];
         }
 
-        let existingNode = nodes.find(n => n.text === nodeText);
+        const existingNode = nodes.find(n => n.text.toLowerCase() === nodeText.toLowerCase());
         if (!existingNode) {
-          const newNode = {
+          addNode({
             id: generateId(),
             text: nodeText,
-            type: nodeType,
+            tags: tags,
             x: Math.random() * 500,
             y: Math.random() * 500
-          };
-          addNode(newNode);
-          return newNode;
-        }
-        return existingNode;
-      });
-
-      for (let i = 0; i < createdNodes.length - 1; i++) {
-        const sourceNode = createdNodes[i];
-        const targetNode = createdNodes[i + 1];
-        addLink(sourceNode.id, targetNode.id);
-      }
-    } else {
-      let nodeText = input;
-      let nodeType = selectedType;
-
-      if (input.includes(':')) {
-        const [typeStr, textStr] = input.split(':');
-        const typeId = typeStr.trim().toLowerCase();
-        nodeText = textStr.trim();
-
-        if (!nodeTypes.some(t => t.id === typeId)) {
-          const newNodeType = createNodeType(typeStr.trim());
-          addNodeType(newNodeType);
-          nodeType = newNodeType.id;
-        } else {
-          nodeType = typeId;
+          });
         }
       }
-
-      addNode({
-        id: generateId(),
-        text: nodeText,
-        type: nodeType,
-        x: Math.random() * 500,
-        y: Math.random() * 500
-      });
-    }
+    });
+    
     setInput('');
   };
 
@@ -249,22 +217,6 @@ export const NodePanel: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="nodeType" className="block text-sm font-medium text-gray-700 mb-1">
-              Default Node Type
-            </label>
-            <select
-              id="nodeType"
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value)}
-              className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {nodeTypes.map(type => (
-                <option key={type.id} value={type.id}>{type.name}</option>
-              ))}
-            </select>
-          </div>
-
           <div className="relative">
             <label htmlFor="nodeInput" className="block text-sm font-medium text-gray-700 mb-1">
               Node Text
@@ -274,7 +226,8 @@ export const NodePanel: React.FC = () => {
               id="nodeInput"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Add node (e.g., 'fruit -> tension:rotten -> bad apple')"
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple')"
               rows={4}
               className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -343,15 +296,18 @@ export const NodePanel: React.FC = () => {
           >
             <span className="font-medium">{node.text}</span>
             <div className="flex items-center gap-2">
-              <span 
-                className="text-sm px-2 py-1 rounded"
-                style={{ 
-                  backgroundColor: nodeTypes.find(t => t.id === node.type)?.color,
-                  color: 'white'
-                }}
-              >
-                {nodeTypes.find(t => t.id === node.type)?.name}
-              </span>
+              {node.tags && node.tags.length > 0 && (
+                <div className="flex gap-1">
+                  {node.tags.map((tag, index) => (
+                    <span 
+                      key={index}
+                      className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
               <button
                 onClick={() => setSelectedNode(node)}
                 className="p-1 text-gray-500 hover:text-gray-700 rounded-full hover:bg-gray-200"
@@ -376,4 +332,4 @@ export const NodePanel: React.FC = () => {
       </div>
     </div>
   );
-};
+}

@@ -1,20 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { useMindMapStore } from '../store';
-import { Node, Link, NODE_TYPES } from '../types';
+import { Node, Link } from '../types';
 
 const MIN_NODE_SIZE = 60;
 const PADDING = 20;
 const ARROW_SIZE = 10;
-const VERTICAL_GAP = 150;
-const HORIZONTAL_OFFSET = 300;
+const TRANSITION_DURATION = 300;
 
-export const Graph: React.FC = () => {
+// Layout constants for vertical positioning
+const NODE_SPACING_Y = 150;
+const INITIAL_OFFSET_X = 100;
+const INITIAL_OFFSET_Y = 50;
+
+export default function Graph() {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
   const [linkingNode, setLinkingNode] = useState<Node | null>(null);
   const [tempLine, setTempLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-  const { nodes, links, setSelectedNode, addLink, cleanupInvalidLinks, nodeTypes } = useMindMapStore();
+  const { nodes, links, setSelectedNode, addLink, cleanupInvalidLinks } = useMindMapStore();
 
   useEffect(() => {
     cleanupInvalidLinks();
@@ -36,71 +40,58 @@ export const Graph: React.FC = () => {
     };
   };
 
-  const getNodeTypeInfo = (typeId: string) => {
-    const customType = nodeTypes.find(t => t.id === typeId);
-    if (customType) return customType;
-    const predefinedType = NODE_TYPES.find(t => t.id === typeId);
-    if (predefinedType) return predefinedType;
-    return NODE_TYPES[0];
+  const getNodeColor = (node: Node): string => {
+    if (!node.tags || node.tags.length === 0) return '#6B7280';
+    
+    // Generate a consistent color based on the first tag
+    const tag = node.tags[0];
+    const hue = Array.from(tag).reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
+    return `hsl(${hue}, 70%, 45%)`;
   };
 
-  const organizeNodesVertically = () => {
-    // Create a map to store node chains
-    const chains = new Map<string, Node[]>();
-    const processedNodes = new Set<string>();
-
-    // Helper function to find root nodes (nodes with no incoming links)
-    const findRootNodes = () => {
-      const targetNodes = new Set(links.map(l => l.target));
-      return nodes.filter(node => !targetNodes.has(node.id));
+  // Calculate vertical positions for nodes
+  const calculateNodePositions = () => {
+    const positions = new Map<string, { x: number, y: number }>();
+    const nodesByLevel = new Map<number, Node[]>();
+    const nodeLevels = new Map<string, number>();
+    
+    // Helper function to get node level
+    const getNodeLevel = (nodeId: string, visited = new Set<string>()): number => {
+      if (visited.has(nodeId)) return 0;
+      visited.add(nodeId);
+      
+      const incomingLinks = links.filter(l => l.target === nodeId);
+      if (incomingLinks.length === 0) return 0;
+      
+      const parentLevels = incomingLinks.map(l => getNodeLevel(l.source, visited));
+      return Math.max(...parentLevels) + 1;
     };
 
-    // Helper function to build chain from root node
-    const buildChain = (startNode: Node) => {
-      const chain: Node[] = [startNode];
-      let currentNode = startNode;
+    // Calculate levels for all nodes
+    nodes.forEach(node => {
+      const level = getNodeLevel(node.id);
+      nodeLevels.set(node.id, level);
       
-      while (true) {
-        const nextLink = links.find(l => l.source === currentNode.id);
-        if (!nextLink) break;
-        
-        const nextNode = nodes.find(n => n.id === nextLink.target);
-        if (!nextNode || processedNodes.has(nextNode.id)) break;
-        
-        chain.push(nextNode);
-        processedNodes.add(nextNode.id);
-        currentNode = nextNode;
+      if (!nodesByLevel.has(level)) {
+        nodesByLevel.set(level, []);
       }
-      
-      return chain;
-    };
-
-    // Process all root nodes and their chains
-    const rootNodes = findRootNodes();
-    rootNodes.forEach((rootNode, index) => {
-      if (!processedNodes.has(rootNode.id)) {
-        processedNodes.add(rootNode.id);
-        const chain = buildChain(rootNode);
-        chains.set(rootNode.id, chain);
-      }
+      nodesByLevel.get(level)!.push(node);
     });
 
-    // Position nodes in vertical chains
-    let currentX = HORIZONTAL_OFFSET;
-    chains.forEach((chain) => {
-      chain.forEach((node, index) => {
-        node.x = currentX;
-        node.y = VERTICAL_GAP * (index + 1);
+    // Position nodes by level
+    nodesByLevel.forEach((levelNodes, level) => {
+      const levelWidth = levelNodes.length * 250;
+      const startX = INITIAL_OFFSET_X + (window.innerWidth - levelWidth) / 2;
+      
+      levelNodes.forEach((node, index) => {
+        positions.set(node.id, {
+          x: startX + index * 250,
+          y: INITIAL_OFFSET_Y + level * NODE_SPACING_Y
+        });
       });
-      currentX += HORIZONTAL_OFFSET;
     });
-
-    // Handle remaining nodes that aren't part of any chain
-    const unprocessedNodes = nodes.filter(node => !processedNodes.has(node.id));
-    unprocessedNodes.forEach((node, index) => {
-      node.x = currentX;
-      node.y = VERTICAL_GAP * (index + 1);
-    });
+    
+    return positions;
   };
 
   useEffect(() => {
@@ -109,9 +100,6 @@ export const Graph: React.FC = () => {
     if (simulationRef.current) {
       simulationRef.current.stop();
     }
-
-    // Organize nodes vertically before rendering
-    organizeNodesVertically();
 
     const container = svgRef.current.parentElement;
     const width = container?.clientWidth || window.innerWidth;
@@ -148,27 +136,15 @@ export const Graph: React.FC = () => {
 
     svg.call(zoom);
 
-    // Add subtle grid pattern
-    const gridSize = 50;
-    const grid = g.append('g')
-      .attr('class', 'grid')
-      .attr('opacity', 0.1);
-
-    grid.append('pattern')
-      .attr('id', 'grid-pattern')
-      .attr('width', gridSize)
-      .attr('height', gridSize)
-      .attr('patternUnits', 'userSpaceOnUse')
-      .append('path')
-      .attr('d', `M ${gridSize} 0 L 0 0 0 ${gridSize}`)
-      .attr('fill', 'none')
-      .attr('stroke', '#aaa')
-      .attr('stroke-width', 0.5);
-
-    grid.append('rect')
-      .attr('width', width)
-      .attr('height', height)
-      .attr('fill', 'url(#grid-pattern)');
+    // Calculate and assign positions
+    const nodePositions = calculateNodePositions();
+    nodes.forEach(node => {
+      const pos = nodePositions.get(node.id);
+      if (pos) {
+        node.x = pos.x;
+        node.y = pos.y;
+      }
+    });
 
     // Create links
     const validLinks = links.map(link => ({
@@ -180,15 +156,18 @@ export const Graph: React.FC = () => {
     const simulation = d3.forceSimulation(nodes as d3.SimulationNodeDatum[])
       .force('link', d3.forceLink(validLinks)
         .id((d: any) => d.id)
-        .distance(VERTICAL_GAP)
-        .strength(0.1))
-      .force('charge', d3.forceManyBody().strength(-1000))
-      .force('collide', d3.forceCollide().radius(80))
-      .alpha(0.1)
-      .alphaDecay(0.02);
+        .distance(0)
+        .strength(0))
+      .force('charge', null)
+      .force('collide', null)
+      .force('x', null)
+      .force('y', null)
+      .alpha(0)
+      .alphaTarget(0);
 
     simulationRef.current = simulation;
 
+    // Create curved links with arrows
     const link = g.selectAll('.link')
       .data(validLinks)
       .enter()
@@ -198,6 +177,7 @@ export const Graph: React.FC = () => {
       .style('stroke', '#999')
       .style('stroke-width', 2)
       .style('fill', 'none')
+      .style('cursor', 'pointer')
       .style('opacity', 0.6)
       .on('mouseover', function() {
         d3.select(this)
@@ -263,7 +243,7 @@ export const Graph: React.FC = () => {
     node.each(function(d: Node) {
       const size = getNodeSize(d.text);
       const group = d3.select(this);
-      const nodeType = getNodeTypeInfo(d.type);
+      const nodeColor = getNodeColor(d);
       
       group.append('rect')
         .attr('width', size.width)
@@ -272,7 +252,7 @@ export const Graph: React.FC = () => {
         .attr('y', -size.height / 2)
         .attr('rx', 8)
         .attr('ry', 8)
-        .style('fill', nodeType.color)
+        .style('fill', nodeColor)
         .style('filter', 'url(#drop-shadow)')
         .style('cursor', 'grab');
 
@@ -285,13 +265,15 @@ export const Graph: React.FC = () => {
         .style('font-weight', '500')
         .style('pointer-events', 'none');
 
-      group.append('text')
-        .text(nodeType.name)
-        .attr('text-anchor', 'middle')
-        .attr('dy', size.height / 2 + 15)
-        .style('fill', '#666')
-        .style('font-size', '10px')
-        .style('pointer-events', 'none');
+      if (d.tags && d.tags.length > 0) {
+        group.append('text')
+          .text(d.tags.join(', '))
+          .attr('text-anchor', 'middle')
+          .attr('dy', size.height / 2 + 15)
+          .style('fill', '#666')
+          .style('font-size', '10px')
+          .style('pointer-events', 'none');
+      }
     });
 
     node.on('click', (event: MouseEvent, d: Node) => {
@@ -341,10 +323,7 @@ export const Graph: React.FC = () => {
       d3.select(this).style('cursor', 'grab');
     }
 
-    simulation.on('tick', () => {
-      node.attr('transform', d => `translate(${d.x},${d.y})`);
-      updateLinks();
-    });
+    simulation.on('tick', updateLinks);
 
     svg.on('mousemove', (event: MouseEvent) => {
       if (linkingNode && tempLine) {
@@ -366,14 +345,14 @@ export const Graph: React.FC = () => {
 
     // Center the initial view
     const initialTransform = d3.zoomIdentity
-      .translate(width / 2, height / 2)
+      .translate(0, 0)
       .scale(0.8);
     svg.call(zoom.transform, initialTransform);
 
     return () => {
       simulation.stop();
     };
-  }, [nodes, links, linkingNode, tempLine, nodeTypes]);
+  }, [nodes, links, linkingNode, tempLine]);
 
   return (
     <div className="w-full h-[calc(100vh-200px)] bg-gray-900 rounded-lg">
@@ -383,4 +362,4 @@ export const Graph: React.FC = () => {
       <svg ref={svgRef} className="w-full h-full" />
     </div>
   );
-};
+}
