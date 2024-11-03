@@ -10,7 +10,14 @@ export default function NodeDetails() {
   if (!selectedNode) return null;
 
   const handleInputChange = (field: string, value: string) => {
-    updateNode(selectedNode.id, { [field]: value });
+    // Preserve other fields when updating
+    const updates = {
+      ...selectedNode,
+      [field]: value,
+      tags: selectedNode.tags || [],
+      synonyms: selectedNode.synonyms || []
+    };
+    updateNode(selectedNode.id, updates);
   };
 
   const handleTagsChange = (value: string) => {
@@ -20,7 +27,12 @@ export default function NodeDetails() {
     
     const uniqueTags = Array.from(new Set(tags));
     
-    updateNode(selectedNode.id, { tags: uniqueTags });
+    // Preserve other fields when updating tags
+    updateNode(selectedNode.id, {
+      ...selectedNode,
+      tags: uniqueTags,
+      synonyms: selectedNode.synonyms || []
+    });
   };
 
   const handleSynonymsChange = (value: string) => {
@@ -30,7 +42,12 @@ export default function NodeDetails() {
     
     const uniqueSynonyms = Array.from(new Set(synonyms));
     
-    updateNode(selectedNode.id, { synonyms: uniqueSynonyms });
+    // Preserve other fields when updating synonyms
+    updateNode(selectedNode.id, {
+      ...selectedNode,
+      synonyms: uniqueSynonyms,
+      tags: selectedNode.tags || []
+    });
   };
 
   const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -52,7 +69,7 @@ export default function NodeDetails() {
       e.preventDefault();
       const newSynonym = synonymInput.trim();
       if (newSynonym) {
-        const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
+        const currentSynonyms = selectedNode.synonyms || [];
         if (!currentSynonyms.includes(newSynonym)) {
           handleSynonymsChange([...currentSynonyms, newSynonym].join(','));
         }
@@ -67,11 +84,9 @@ export default function NodeDetails() {
   };
 
   const removeSynonym = (synonymToRemove: string) => {
-    const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
+    const currentSynonyms = selectedNode.synonyms || [];
     handleSynonymsChange(currentSynonyms.filter(synonym => synonym !== synonymToRemove).join(','));
   };
-
-  const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
 
   return (
     <div className="fixed left-0 top-0 h-full w-96 bg-white shadow-xl overflow-y-auto">
@@ -141,7 +156,7 @@ export default function NodeDetails() {
             Synonyms
           </label>
           <div className="flex flex-wrap gap-2 mb-2">
-            {currentSynonyms.map((synonym) => (
+            {(selectedNode.synonyms || []).map((synonym) => (
               <span
                 key={synonym}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-800 text-sm"

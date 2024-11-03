@@ -10,8 +10,10 @@ const TRANSITION_DURATION = 300;
 
 // Layout constants for vertical positioning
 const NODE_SPACING_Y = 150;
-const INITIAL_OFFSET_X = 100;
+const NODE_SPACING_X = 250;
+const INITIAL_OFFSET_X = 50;
 const INITIAL_OFFSET_Y = 50;
+const LEVEL_PADDING = 100; // Padding between levels
 
 export default function Graph() {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -49,13 +51,14 @@ export default function Graph() {
     return `hsl(${hue}, 70%, 45%)`;
   };
 
-  // Calculate vertical positions for nodes
+  // Calculate node positions based on their relationships
   const calculateNodePositions = () => {
     const positions = new Map<string, { x: number, y: number }>();
     const nodesByLevel = new Map<number, Node[]>();
     const nodeLevels = new Map<string, number>();
+    const processedNodes = new Set<string>();
     
-    // Helper function to get node level
+    // Helper function to get node level based on incoming links
     const getNodeLevel = (nodeId: string, visited = new Set<string>()): number => {
       if (visited.has(nodeId)) return 0;
       visited.add(nodeId);
@@ -63,34 +66,47 @@ export default function Graph() {
       const incomingLinks = links.filter(l => l.target === nodeId);
       if (incomingLinks.length === 0) return 0;
       
-      const parentLevels = incomingLinks.map(l => getNodeLevel(l.source, visited));
+      const parentLevels = incomingLinks.map(l => getNodeLevel(l.source, new Set(visited)));
       return Math.max(...parentLevels) + 1;
     };
 
-    // Calculate levels for all nodes
+    // First pass: Calculate levels for all nodes
     nodes.forEach(node => {
-      const level = getNodeLevel(node.id);
-      nodeLevels.set(node.id, level);
-      
-      if (!nodesByLevel.has(level)) {
-        nodesByLevel.set(level, []);
+      if (!processedNodes.has(node.id)) {
+        const level = getNodeLevel(node.id);
+        nodeLevels.set(node.id, level);
+        
+        if (!nodesByLevel.has(level)) {
+          nodesByLevel.set(level, []);
+        }
+        nodesByLevel.get(level)!.push(node);
+        processedNodes.add(node.id);
       }
-      nodesByLevel.get(level)!.push(node);
     });
 
-    // Position nodes by level
+    // Second pass: Position nodes by level
+    const maxLevel = Math.max(...Array.from(nodesByLevel.keys()));
+    
     nodesByLevel.forEach((levelNodes, level) => {
-      const levelWidth = levelNodes.length * 250;
-      const startX = INITIAL_OFFSET_X + (window.innerWidth - levelWidth) / 2;
-      
+      // Sort nodes within level by their connections
+      levelNodes.sort((a, b) => {
+        const aConnections = links.filter(l => l.source === a.id || l.target === a.id).length;
+        const bConnections = links.filter(l => l.source === b.id || l.target === b.id).length;
+        return bConnections - aConnections;
+      });
+
+      // Calculate vertical position for this level
+      const y = INITIAL_OFFSET_Y + level * (NODE_SPACING_Y + LEVEL_PADDING);
+
+      // Position nodes horizontally within their level
       levelNodes.forEach((node, index) => {
-        positions.set(node.id, {
-          x: startX + index * 250,
-          y: INITIAL_OFFSET_Y + level * NODE_SPACING_Y
-        });
+        const x = INITIAL_OFFSET_X + index * NODE_SPACING_X;
+        
+        // Store the calculated position
+        positions.set(node.id, { x, y });
       });
     });
-    
+
     return positions;
   };
 
@@ -141,8 +157,11 @@ export default function Graph() {
     nodes.forEach(node => {
       const pos = nodePositions.get(node.id);
       if (pos) {
-        node.x = pos.x;
-        node.y = pos.y;
+        // Only update position if it's a new node or doesn't have a position
+        if (!node.x || !node.y) {
+          node.x = pos.x;
+          node.y = pos.y;
+        }
       }
     });
 
@@ -343,7 +362,7 @@ export default function Graph() {
       }
     });
 
-    // Center the initial view
+    // Set initial view to show top-left corner
     const initialTransform = d3.zoomIdentity
       .translate(0, 0)
       .scale(0.8);

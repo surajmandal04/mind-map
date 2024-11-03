@@ -9,7 +9,59 @@ interface Suggestion {
   value: string;
 }
 
-export default function NodePanel() {
+const processNodeText = (text: string) => {
+  if (text.includes(':')) {
+    const [tagStr, nodeText] = text.split(':');
+    return {
+      nodeText: nodeText.trim(),
+      tags: [tagStr.toLowerCase().trim()]
+    };
+  }
+  return {
+    nodeText: text,
+    tags: []
+  };
+};
+
+const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
+  // Split the input by ~ to separate node text from metadata
+  const [baseNodeText, ...metadataSections] = nodeText.split('~').map(p => p.trim());
+  
+  // Process the base node text for any tag:text format
+  const { nodeText: finalText, tags: initialTags } = processNodeText(baseNodeText);
+  
+  // Initialize metadata with existing values or defaults
+  const metadata = {
+    text: finalText,
+    tags: [...(existingNode?.tags || []), ...initialTags],
+    details: existingNode?.details || '',
+    synonyms: [...(existingNode?.synonyms || [])]
+  };
+
+  // Process all metadata sections
+  metadataSections.forEach(section => {
+    if (!section.includes('@')) return;
+
+    const [type, value] = section.split('@').map(p => p.trim());
+    const typeLower = type.toLowerCase();
+
+    if (typeLower === 'tag' || typeLower === 'tags') {
+      const newTags = value.split(',').map(t => t.trim());
+      metadata.tags = [...new Set([...metadata.tags, ...newTags])];
+    } else if (typeLower === 'detail' || typeLower === 'details') {
+      metadata.details = value.startsWith('"') && value.endsWith('"') 
+        ? value.slice(1, -1) 
+        : value;
+    } else if (typeLower === 'synonym' || typeLower === 'synonyms') {
+      const newSynonyms = value.split(',').map(s => s.trim());
+      metadata.synonyms = [...new Set([...metadata.synonyms, ...newSynonyms])];
+    }
+  });
+
+  return metadata;
+};
+
+function NodePanel() {
   const [input, setInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [linkingFrom, setLinkingFrom] = useState<string | null>(null);
@@ -21,7 +73,7 @@ export default function NodePanel() {
     nodes, 
     addNode, 
     addLink,
-    updateNode, 
+    updateNode,
     setSelectedNode,
     nodeHistory,
     addToHistory 
@@ -67,116 +119,75 @@ export default function NodePanel() {
     }
   };
 
-  const processNodeText = (text: string) => {
-    let nodeText = text;
-    let tags: string[] = [];
-
-    if (text.includes(':')) {
-      const [tagStr, textStr] = text.split(':');
-      nodeText = textStr.trim();
-      tags = [tagStr.toLowerCase().trim()];
-    }
-
-    return { nodeText, tags };
-  };
-
-  const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
-    const parts = nodeText.split('~').map(p => p.trim());
-    const baseText = parts[0];
-    let details = existingNode?.details || '';
-    let synonyms = existingNode?.synonyms || [];
-
-    // First process any tag:text format
-    const { nodeText: finalText, tags: colonTags } = processNodeText(baseText);
-    let tags = existingNode?.tags || [];
-    tags = [...tags, ...colonTags];
-
-    if (parts.length > 1) {
-      const metadata = parts[1];
-      if (metadata.toLowerCase().startsWith('tag@') || 
-          metadata.toLowerCase().startsWith('tags@')) {
-        const newTags = metadata.split('@')[1].split(',').map(t => t.trim());
-        tags = [...new Set([...tags, ...newTags])];
-      } else if (metadata.toLowerCase().startsWith('detail@') || 
-                 metadata.toLowerCase().startsWith('details@')) {
-        details = metadata.split('@')[1].trim();
-        if (details.startsWith('"') && details.endsWith('"')) {
-          details = details.slice(1, -1);
-        }
-      } else if (metadata.toLowerCase().startsWith('synonym@') ||
-                 metadata.toLowerCase().startsWith('synonyms@')) {
-        const newSynonyms = metadata.split('@')[1].split(',').map(s => s.trim());
-        synonyms = [...new Set([...synonyms, ...newSynonyms])];
-      }
-    }
-
-    return { baseText: finalText, tags, details, synonyms };
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    addToHistory(input);
     
     const lines = input.split('\n').filter(line => line.trim());
     
     lines.forEach(line => {
       if (line.includes('->')) {
+        // Handle linked nodes
         const parts = line.split('->').map(p => p.trim());
         const createdNodes = parts.map(part => {
-          const { baseText, tags, details, synonyms } = processNodeMetadata(part);
-          let existingNode = nodes.find(n => n.text.toLowerCase() === baseText.toLowerCase());
+          const metadata = processNodeMetadata(part);
+          let existingNode = nodes.find(n => n.text.toLowerCase() === metadata.text.toLowerCase());
           
           if (!existingNode) {
             const newNode = {
               id: generateId(),
-              text: baseText,
-              tags,
-              details,
-              synonyms,
-              x: Math.random() * 500,
-              y: Math.random() * 500
+              text: metadata.text,
+              tags: metadata.tags,
+              details: metadata.details,
+              synonyms: metadata.synonyms,
+              x: 0,
+              y: 0
             };
             addNode(newNode);
             return newNode;
           } else {
-            if (tags.length > 0 || details || synonyms.length > 0) {
-              updateNode(existingNode.id, {
-                tags: [...new Set([...existingNode.tags, ...tags])],
-                details: details || existingNode.details,
-                synonyms: [...new Set([...existingNode.synonyms, ...synonyms])]
-              });
-            }
+            // Update existing node with new metadata
+            const updates = {
+              tags: [...new Set([...(existingNode.tags || []), ...metadata.tags])],
+              details: metadata.details || existingNode.details,
+              synonyms: [...new Set([...(existingNode.synonyms || []), ...metadata.synonyms])]
+            };
+            updateNode(existingNode.id, updates);
             return existingNode;
           }
         });
 
+        // Create links between nodes
         for (let i = 0; i < createdNodes.length - 1; i++) {
           addLink(createdNodes[i].id, createdNodes[i + 1].id);
         }
       } else {
-        const { baseText, tags, details, synonyms } = processNodeMetadata(line);
-        const existingNode = nodes.find(n => n.text.toLowerCase() === baseText.toLowerCase());
+        // Handle single node
+        const metadata = processNodeMetadata(line);
+        let existingNode = nodes.find(n => n.text.toLowerCase() === metadata.text.toLowerCase());
         
         if (!existingNode) {
           addNode({
             id: generateId(),
-            text: baseText,
-            tags,
-            details,
-            synonyms,
-            x: Math.random() * 500,
-            y: Math.random() * 500
+            text: metadata.text,
+            tags: metadata.tags,
+            details: metadata.details,
+            synonyms: metadata.synonyms,
+            x: 0,
+            y: 0
           });
-        } else if (tags.length > 0 || details || synonyms.length > 0) {
-          updateNode(existingNode.id, {
-            tags: [...new Set([...existingNode.tags, ...tags])],
-            details: details || existingNode.details,
-            synonyms: [...new Set([...existingNode.synonyms, ...synonyms])]
-          });
+        } else {
+          // Update existing node with new metadata
+          const updates = {
+            tags: [...new Set([...(existingNode.tags || []), ...metadata.tags])],
+            details: metadata.details || existingNode.details,
+            synonyms: [...new Set([...(existingNode.synonyms || []), ...metadata.synonyms])]
+          };
+          updateNode(existingNode.id, updates);
         }
       }
     });
     
+    addToHistory(input);
     setInput('');
   };
 
@@ -219,12 +230,11 @@ export default function NodePanel() {
   };
 
   const filteredNodes = nodes.filter(node => {
-    const searchTermLower = searchTerm.toLowerCase();
+    const searchLower = searchTerm.toLowerCase();
     return (
-      node.text.toLowerCase().includes(searchTermLower) ||
-      (Array.isArray(node.synonyms) && node.synonyms.some(synonym => 
-        synonym.toLowerCase().includes(searchTermLower)
-      ))
+      node.text.toLowerCase().includes(searchLower) ||
+      (node.synonyms && node.synonyms.some(s => s.toLowerCase().includes(searchLower))) ||
+      (node.tags && node.tags.some(t => t.toLowerCase().includes(searchLower)))
     );
   });
 
@@ -280,7 +290,7 @@ export default function NodePanel() {
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              placeholder="Add nodes (e.g., 'dialysis -> treatment:kidney transplant' or 'malaria ~ synonyms@fever,chills')"
+              placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple')"
               rows={4}
               className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -322,7 +332,7 @@ export default function NodePanel() {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search nodes or synonyms..."
+            placeholder="Search nodes..."
             className="w-full px-4 py-2 pl-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
@@ -349,14 +359,9 @@ export default function NodePanel() {
           >
             <div className="flex flex-col">
               <span className="font-medium">{node.text}</span>
-              {Array.isArray(node.synonyms) && node.synonyms.length > 0 && (
+              {node.synonyms && node.synonyms.length > 0 && (
                 <span className="text-sm text-gray-500">
                   Synonyms: {node.synonyms.join(', ')}
-                </span>
-              )}
-              {node.details && (
-                <span className="text-sm text-gray-600 mt-1">
-                  {node.details}
                 </span>
               )}
             </div>
@@ -398,3 +403,5 @@ export default function NodePanel() {
     </div>
   );
 }
+
+export default NodePanel;
