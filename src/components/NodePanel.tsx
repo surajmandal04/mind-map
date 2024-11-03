@@ -20,7 +20,8 @@ export default function NodePanel() {
   const { 
     nodes, 
     addNode, 
-    addLink, 
+    addLink,
+    updateNode, 
     setSelectedNode,
     nodeHistory,
     addToHistory 
@@ -66,66 +67,111 @@ export default function NodePanel() {
     }
   };
 
+  const processNodeText = (text: string) => {
+    let nodeText = text;
+    let tags: string[] = [];
+
+    if (text.includes(':')) {
+      const [tagStr, textStr] = text.split(':');
+      nodeText = textStr.trim();
+      tags = [tagStr.toLowerCase().trim()];
+    }
+
+    return { nodeText, tags };
+  };
+
+  const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
+    const parts = nodeText.split('~').map(p => p.trim());
+    const baseText = parts[0];
+    let details = existingNode?.details || '';
+    let synonyms = existingNode?.synonyms || [];
+
+    // First process any tag:text format
+    const { nodeText: finalText, tags: colonTags } = processNodeText(baseText);
+    let tags = existingNode?.tags || [];
+    tags = [...tags, ...colonTags];
+
+    if (parts.length > 1) {
+      const metadata = parts[1];
+      if (metadata.toLowerCase().startsWith('tag@') || 
+          metadata.toLowerCase().startsWith('tags@')) {
+        const newTags = metadata.split('@')[1].split(',').map(t => t.trim());
+        tags = [...new Set([...tags, ...newTags])];
+      } else if (metadata.toLowerCase().startsWith('detail@') || 
+                 metadata.toLowerCase().startsWith('details@')) {
+        details = metadata.split('@')[1].trim();
+        if (details.startsWith('"') && details.endsWith('"')) {
+          details = details.slice(1, -1);
+        }
+      } else if (metadata.toLowerCase().startsWith('synonym@') ||
+                 metadata.toLowerCase().startsWith('synonyms@')) {
+        const newSynonyms = metadata.split('@')[1].split(',').map(s => s.trim());
+        synonyms = [...new Set([...synonyms, ...newSynonyms])];
+      }
+    }
+
+    return { baseText: finalText, tags, details, synonyms };
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Add to history before processing
     addToHistory(input);
     
     const lines = input.split('\n').filter(line => line.trim());
     
     lines.forEach(line => {
-      const parts = line.split('->').map(p => p.trim());
-      
-      if (parts.length >= 2) {
+      if (line.includes('->')) {
+        const parts = line.split('->').map(p => p.trim());
         const createdNodes = parts.map(part => {
-          let nodeText = part;
-          let tags: string[] = [];
-
-          if (part.includes(':')) {
-            const [tagStr, textStr] = part.split(':');
-            nodeText = textStr.trim();
-            tags = [tagStr.toLowerCase().trim()];
-          }
-
-          let existingNode = nodes.find(n => n.text.toLowerCase() === nodeText.toLowerCase());
+          const { baseText, tags, details, synonyms } = processNodeMetadata(part);
+          let existingNode = nodes.find(n => n.text.toLowerCase() === baseText.toLowerCase());
+          
           if (!existingNode) {
             const newNode = {
               id: generateId(),
-              text: nodeText,
-              tags: tags,
+              text: baseText,
+              tags,
+              details,
+              synonyms,
               x: Math.random() * 500,
               y: Math.random() * 500
             };
             addNode(newNode);
             return newNode;
+          } else {
+            if (tags.length > 0 || details || synonyms.length > 0) {
+              updateNode(existingNode.id, {
+                tags: [...new Set([...existingNode.tags, ...tags])],
+                details: details || existingNode.details,
+                synonyms: [...new Set([...existingNode.synonyms, ...synonyms])]
+              });
+            }
+            return existingNode;
           }
-          return existingNode;
         });
 
         for (let i = 0; i < createdNodes.length - 1; i++) {
-          const sourceNode = createdNodes[i];
-          const targetNode = createdNodes[i + 1];
-          addLink(sourceNode.id, targetNode.id);
+          addLink(createdNodes[i].id, createdNodes[i + 1].id);
         }
       } else {
-        let nodeText = input;
-        let tags: string[] = [];
-
-        if (input.includes(':')) {
-          const [tagStr, textStr] = input.split(':');
-          nodeText = textStr.trim();
-          tags = [tagStr.toLowerCase().trim()];
-        }
-
-        const existingNode = nodes.find(n => n.text.toLowerCase() === nodeText.toLowerCase());
+        const { baseText, tags, details, synonyms } = processNodeMetadata(line);
+        const existingNode = nodes.find(n => n.text.toLowerCase() === baseText.toLowerCase());
+        
         if (!existingNode) {
           addNode({
             id: generateId(),
-            text: nodeText,
-            tags: tags,
+            text: baseText,
+            tags,
+            details,
+            synonyms,
             x: Math.random() * 500,
             y: Math.random() * 500
+          });
+        } else if (tags.length > 0 || details || synonyms.length > 0) {
+          updateNode(existingNode.id, {
+            tags: [...new Set([...existingNode.tags, ...tags])],
+            details: details || existingNode.details,
+            synonyms: [...new Set([...existingNode.synonyms, ...synonyms])]
           });
         }
       }
@@ -172,9 +218,15 @@ export default function NodePanel() {
     }
   };
 
-  const filteredNodes = nodes.filter(node => 
-    node.text.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredNodes = nodes.filter(node => {
+    const searchTermLower = searchTerm.toLowerCase();
+    return (
+      node.text.toLowerCase().includes(searchTermLower) ||
+      (Array.isArray(node.synonyms) && node.synonyms.some(synonym => 
+        synonym.toLowerCase().includes(searchTermLower)
+      ))
+    );
+  });
 
   const getSuggestionIcon = (type: Suggestion['type']) => {
     switch (type) {
@@ -226,8 +278,9 @@ export default function NodePanel() {
               id="nodeInput"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={() => setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple')"
+              placeholder="Add nodes (e.g., 'dialysis -> treatment:kidney transplant' or 'malaria ~ synonyms@fever,chills')"
               rows={4}
               className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -269,7 +322,7 @@ export default function NodePanel() {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search nodes..."
+            placeholder="Search nodes or synonyms..."
             className="w-full px-4 py-2 pl-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
@@ -294,7 +347,19 @@ export default function NodePanel() {
             key={node.id}
             className="flex items-center justify-between p-2 hover:bg-gray-100 rounded-lg mb-2"
           >
-            <span className="font-medium">{node.text}</span>
+            <div className="flex flex-col">
+              <span className="font-medium">{node.text}</span>
+              {Array.isArray(node.synonyms) && node.synonyms.length > 0 && (
+                <span className="text-sm text-gray-500">
+                  Synonyms: {node.synonyms.join(', ')}
+                </span>
+              )}
+              {node.details && (
+                <span className="text-sm text-gray-600 mt-1">
+                  {node.details}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {node.tags && node.tags.length > 0 && (
                 <div className="flex gap-1">

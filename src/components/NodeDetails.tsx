@@ -5,6 +5,7 @@ import { useMindMapStore } from '../store';
 export default function NodeDetails() {
   const { selectedNode, updateNode, removeNode, setSelectedNode } = useMindMapStore();
   const [tagInput, setTagInput] = useState('');
+  const [synonymInput, setSynonymInput] = useState('');
 
   if (!selectedNode) return null;
 
@@ -13,15 +14,23 @@ export default function NodeDetails() {
   };
 
   const handleTagsChange = (value: string) => {
-    // Split by commas and clean up whitespace
     const tags = value.split(',')
       .map(tag => tag.trim().toLowerCase())
       .filter(tag => tag.length > 0);
     
-    // Remove duplicates
     const uniqueTags = Array.from(new Set(tags));
     
     updateNode(selectedNode.id, { tags: uniqueTags });
+  };
+
+  const handleSynonymsChange = (value: string) => {
+    const synonyms = value.split(',')
+      .map(synonym => synonym.trim())
+      .filter(synonym => synonym.length > 0);
+    
+    const uniqueSynonyms = Array.from(new Set(synonyms));
+    
+    updateNode(selectedNode.id, { synonyms: uniqueSynonyms });
   };
 
   const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -38,10 +47,31 @@ export default function NodeDetails() {
     }
   };
 
+  const handleSynonymInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const newSynonym = synonymInput.trim();
+      if (newSynonym) {
+        const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
+        if (!currentSynonyms.includes(newSynonym)) {
+          handleSynonymsChange([...currentSynonyms, newSynonym].join(','));
+        }
+        setSynonymInput('');
+      }
+    }
+  };
+
   const removeTag = (tagToRemove: string) => {
     const currentTags = selectedNode.tags || [];
     handleTagsChange(currentTags.filter(tag => tag !== tagToRemove).join(','));
   };
+
+  const removeSynonym = (synonymToRemove: string) => {
+    const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
+    handleSynonymsChange(currentSynonyms.filter(synonym => synonym !== synonymToRemove).join(','));
+  };
+
+  const currentSynonyms = Array.isArray(selectedNode.synonyms) ? selectedNode.synonyms : [];
 
   return (
     <div className="fixed left-0 top-0 h-full w-96 bg-white shadow-xl overflow-y-auto">
@@ -110,13 +140,30 @@ export default function NodeDetails() {
             <AlignLeft className="w-4 h-4" />
             Synonyms
           </label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {currentSynonyms.map((synonym) => (
+              <span
+                key={synonym}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-800 text-sm"
+              >
+                {synonym}
+                <button
+                  onClick={() => removeSynonym(synonym)}
+                  className="w-4 h-4 rounded-full hover:bg-green-200 flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
           <input
             id="nodeSynonyms"
             type="text"
-            value={selectedNode.synonyms || ''}
-            onChange={(e) => handleInputChange('synonyms', e.target.value)}
+            value={synonymInput}
+            onChange={(e) => setSynonymInput(e.target.value)}
+            onKeyDown={handleSynonymInputKeyDown}
             className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-            placeholder="Add synonyms (comma-separated)..."
+            placeholder="Add synonyms (press Enter or comma to add)..."
           />
         </div>
 
