@@ -2,13 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { useMindMapStore } from '../store';
 import { Node, Link } from '../types';
+import { Trash2 } from 'lucide-react';
 
 const MIN_NODE_SIZE = 60;
 const PADDING = 20;
 const ARROW_SIZE = 10;
 const TRANSITION_DURATION = 300;
-
-// Layout constants for vertical positioning
 const NODE_SPACING_Y = 150;
 const NODE_SPACING_X = 250;
 const INITIAL_OFFSET_X = 50;
@@ -25,68 +24,29 @@ export default function Graph({ searchTerm }: GraphProps) {
   const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
   const [linkingNode, setLinkingNode] = useState<Node | null>(null);
   const [tempLine, setTempLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-  const { nodes, links, setSelectedNode, addLink, cleanupInvalidLinks } = useMindMapStore();
+  const [hoveredLink, setHoveredLink] = useState<{ source: string; target: string } | null>(null);
+  const { nodes, links, setSelectedNode, addLink, cleanupInvalidLinks, removeLink } = useMindMapStore();
 
   useEffect(() => {
     cleanupInvalidLinks();
   }, []);
 
-  // Center view on searched node
-  useEffect(() => {
-    if (!searchTerm || !svgRef.current || !zoomRef.current) return;
-
-    const searchedNode = nodes.find(node => 
-      node.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      node.synonyms?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-
-    if (searchedNode && searchedNode.x !== undefined && searchedNode.y !== undefined) {
-      const svg = d3.select(svgRef.current);
-      const container = svgRef.current.parentElement;
-      if (!container) return;
-
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-
-      // Calculate the transform to center the node
-      const scale = 0.8; // Zoom level
-      const transform = d3.zoomIdentity
-        .translate(width / 2 - searchedNode.x * scale, height / 2 - searchedNode.y * scale)
-        .scale(scale);
-
-      // Smoothly transition to the new view
-      svg.transition()
-        .duration(750)
-        .call(zoomRef.current.transform, transform);
-
-      // Highlight the searched node
-      svg.selectAll('.node')
-        .transition()
-        .duration(750)
-        .style('opacity', (d: any) => {
-          const isMatch = d.id === searchedNode.id;
-          return isMatch ? 1 : 0.4;
-        });
-
-      svg.selectAll('.link')
-        .transition()
-        .duration(750)
-        .style('opacity', 0.2);
-
-      // Reset highlighting after a delay
-      setTimeout(() => {
-        svg.selectAll('.node')
-          .transition()
-          .duration(750)
-          .style('opacity', 1);
-
-        svg.selectAll('.link')
-          .transition()
-          .duration(750)
-          .style('opacity', 0.6);
-      }, 2000);
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Delete' && hoveredLink) {
+      e.preventDefault();
+      e.stopPropagation();
+      removeLink(hoveredLink.source, hoveredLink.target);
+      setHoveredLink(null);
     }
-  }, [searchTerm, nodes]);
+  };
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (svg) {
+      svg.addEventListener('keydown', handleKeyDown);
+      return () => svg.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [hoveredLink]);
 
   const getNodeSize = (text: string): { width: number; height: number } => {
     const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -112,55 +72,54 @@ export default function Graph({ searchTerm }: GraphProps) {
     return `hsl(${hue}, 70%, 45%)`;
   };
 
-  const calculateNodePositions = () => {
-    const positions = new Map<string, { x: number, y: number }>();
-    const nodesByLevel = new Map<number, Node[]>();
-    const nodeLevels = new Map<string, number>();
-    const processedNodes = new Set<string>();
-    
-    const getNodeLevel = (nodeId: string, visited = new Set<string>()): number => {
-      if (visited.has(nodeId)) return 0;
-      visited.add(nodeId);
-      
-      const incomingLinks = links.filter(l => l.target === nodeId);
-      if (incomingLinks.length === 0) return 0;
-      
-      const parentLevels = incomingLinks.map(l => getNodeLevel(l.source, new Set(visited)));
-      return Math.max(...parentLevels) + 1;
-    };
+  useEffect(() => {
+    if (!searchTerm || !svgRef.current || !zoomRef.current) return;
 
-    nodes.forEach(node => {
-      if (!processedNodes.has(node.id)) {
-        const level = getNodeLevel(node.id);
-        nodeLevels.set(node.id, level);
-        
-        if (!nodesByLevel.has(level)) {
-          nodesByLevel.set(level, []);
-        }
-        nodesByLevel.get(level)!.push(node);
-        processedNodes.add(node.id);
-      }
-    });
+    const searchedNode = nodes.find(node => 
+      node.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      node.synonyms?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
 
-    const maxLevel = Math.max(...Array.from(nodesByLevel.keys()));
-    
-    nodesByLevel.forEach((levelNodes, level) => {
-      levelNodes.sort((a, b) => {
-        const aConnections = links.filter(l => l.source === a.id || l.target === a.id).length;
-        const bConnections = links.filter(l => l.source === b.id || l.target === b.id).length;
-        return bConnections - aConnections;
-      });
+    if (searchedNode && searchedNode.x !== undefined && searchedNode.y !== undefined) {
+      const svg = d3.select(svgRef.current);
+      const container = svgRef.current.parentElement;
+      if (!container) return;
 
-      const y = INITIAL_OFFSET_Y + level * (NODE_SPACING_Y + LEVEL_PADDING);
+      const width = container.clientWidth;
+      const height = container.clientHeight;
 
-      levelNodes.forEach((node, index) => {
-        const x = INITIAL_OFFSET_X + index * NODE_SPACING_X;
-        positions.set(node.id, { x, y });
-      });
-    });
+      const scale = 0.8;
+      const transform = d3.zoomIdentity
+        .translate(width / 2 - searchedNode.x * scale, height / 2 - searchedNode.y * scale)
+        .scale(scale);
 
-    return positions;
-  };
+      svg.transition()
+        .duration(750)
+        .call(zoomRef.current.transform, transform);
+
+      svg.selectAll('.node')
+        .transition()
+        .duration(750)
+        .style('opacity', (d: any) => d.id === searchedNode.id ? 1 : 0.4);
+
+      svg.selectAll('.link')
+        .transition()
+        .duration(750)
+        .style('opacity', 0.2);
+
+      setTimeout(() => {
+        svg.selectAll('.node')
+          .transition()
+          .duration(750)
+          .style('opacity', 1);
+
+        svg.selectAll('.link')
+          .transition()
+          .duration(750)
+          .style('opacity', 0.6);
+      }, 2000);
+    }
+  }, [searchTerm, nodes]);
 
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
@@ -175,7 +134,8 @@ export default function Graph({ searchTerm }: GraphProps) {
 
     const svg = d3.select(svgRef.current)
       .attr('width', width)
-      .attr('height', height);
+      .attr('height', height)
+      .attr('tabindex', '0'); // Make SVG focusable
 
     svg.selectAll('*').remove();
 
@@ -204,17 +164,6 @@ export default function Graph({ searchTerm }: GraphProps) {
     zoomRef.current = zoom;
     svg.call(zoom);
 
-    const nodePositions = calculateNodePositions();
-    nodes.forEach(node => {
-      const pos = nodePositions.get(node.id);
-      if (pos) {
-        if (!node.x || !node.y) {
-          node.x = pos.x;
-          node.y = pos.y;
-        }
-      }
-    });
-
     const validLinks = links.map(link => ({
       source: nodes.find(n => n.id === link.source)!,
       target: nodes.find(n => n.id === link.target)!
@@ -234,43 +183,76 @@ export default function Graph({ searchTerm }: GraphProps) {
 
     simulationRef.current = simulation;
 
-    const link = g.selectAll('.link')
+    const linkGroup = g.selectAll('.link-group')
       .data(validLinks)
       .enter()
-      .append('path')
+      .append('g')
+      .attr('class', 'link-group')
+      .style('cursor', 'pointer');
+
+    const link = linkGroup.append('path')
       .attr('class', 'link')
       .attr('marker-end', 'url(#arrow)')
       .style('stroke', '#999')
       .style('stroke-width', 2)
       .style('fill', 'none')
-      .style('cursor', 'pointer')
-      .style('opacity', 0.6)
-      .on('mouseover', function() {
-        d3.select(this)
+      .style('opacity', 0.6);
+
+    const deleteButton = linkGroup.append('g')
+      .attr('class', 'delete-button')
+      .style('opacity', 0)
+      .style('cursor', 'pointer');
+
+    deleteButton.append('circle')
+      .attr('r', 12)
+      .style('fill', '#ef4444')
+      .style('stroke', '#fff')
+      .style('stroke-width', 2);
+
+    deleteButton.append('g')
+      .attr('transform', 'translate(-6, -6)')
+      .append('path')
+      .attr('d', 'M3 6L6 9M6 6L3 9M14.5 3.5L14.5 3.5')
+      .style('stroke', '#fff')
+      .style('stroke-width', 2)
+      .style('stroke-linecap', 'round')
+      .style('stroke-linejoin', 'round');
+
+    linkGroup
+      .on('mouseover', function(event, d: any) {
+        d3.select(this).select('.link')
           .transition()
           .duration(200)
           .style('opacity', 1)
           .style('stroke-width', 3);
+
+        d3.select(this).select('.delete-button')
+          .transition()
+          .duration(200)
+          .style('opacity', 1);
+
+        setHoveredLink({ source: d.source.id, target: d.target.id });
+        svgRef.current?.focus(); // Focus the SVG when hovering over a link
       })
       .on('mouseout', function() {
-        d3.select(this)
+        d3.select(this).select('.link')
           .transition()
           .duration(200)
           .style('opacity', 0.6)
           .style('stroke-width', 2);
+
+        d3.select(this).select('.delete-button')
+          .transition()
+          .duration(200)
+          .style('opacity', 0);
+
+        setHoveredLink(null);
       });
 
-    if (tempLine) {
-      g.append('line')
-        .attr('class', 'temp-link')
-        .attr('x1', tempLine.x1)
-        .attr('y1', tempLine.y1)
-        .attr('x2', tempLine.x2)
-        .attr('y2', tempLine.y2)
-        .style('stroke', '#666')
-        .style('stroke-width', 2)
-        .style('stroke-dasharray', '5,5');
-    }
+    deleteButton.on('click', (event, d: any) => {
+      event.stopPropagation();
+      removeLink(d.source.id, d.target.id);
+    });
 
     const node = g.selectAll('.node')
       .data(nodes)
@@ -282,28 +264,6 @@ export default function Graph({ searchTerm }: GraphProps) {
         .on('start', dragstarted)
         .on('drag', dragged)
         .on('end', dragended));
-
-    const defs = svg.append('defs');
-    const filter = defs.append('filter')
-      .attr('id', 'drop-shadow')
-      .attr('height', '130%');
-
-    filter.append('feGaussianBlur')
-      .attr('in', 'SourceAlpha')
-      .attr('stdDeviation', 3)
-      .attr('result', 'blur');
-
-    filter.append('feOffset')
-      .attr('in', 'blur')
-      .attr('dx', 2)
-      .attr('dy', 2)
-      .attr('result', 'offsetBlur');
-
-    const feMerge = filter.append('feMerge');
-    feMerge.append('feMergeNode')
-      .attr('in', 'offsetBlur');
-    feMerge.append('feMergeNode')
-      .attr('in', 'SourceGraphic');
 
     node.each(function(d: Node) {
       const size = getNodeSize(d.text);
@@ -352,7 +312,7 @@ export default function Graph({ searchTerm }: GraphProps) {
     });
 
     function updateLinks() {
-      link.attr('d', (d: any) => {
+      linkGroup.each(function(d: any) {
         const sourceSize = getNodeSize(d.source.text);
         const targetSize = getNodeSize(d.target.text);
         const sourceRadius = Math.max(sourceSize.width, sourceSize.height) / 2;
@@ -362,14 +322,21 @@ export default function Graph({ searchTerm }: GraphProps) {
         const dy = d.target.y - d.source.y;
         const dr = Math.sqrt(dx * dx + dy * dy);
         
-        if (dr === 0) return '';
+        if (dr === 0) return;
 
         const sourceX = d.source.x + (dx * sourceRadius) / dr;
         const sourceY = d.source.y + (dy * sourceRadius) / dr;
         const targetX = d.target.x - (dx * (targetRadius + ARROW_SIZE)) / dr;
         const targetY = d.target.y - (dy * (targetRadius + ARROW_SIZE)) / dr;
 
-        return `M${sourceX},${sourceY}L${targetX},${targetY}`;
+        d3.select(this).select('.link')
+          .attr('d', `M${sourceX},${sourceY}L${targetX},${targetY}`);
+
+        const buttonX = (sourceX + targetX) / 2;
+        const buttonY = (sourceY + targetY) / 2;
+        
+        d3.select(this).select('.delete-button')
+          .attr('transform', `translate(${buttonX},${buttonY})`);
       });
     }
 
@@ -390,24 +357,6 @@ export default function Graph({ searchTerm }: GraphProps) {
 
     simulation.on('tick', updateLinks);
 
-    svg.on('mousemove', (event: MouseEvent) => {
-      if (linkingNode && tempLine) {
-        const [x, y] = d3.pointer(event);
-        setTempLine({
-          ...tempLine,
-          x2: x,
-          y2: y
-        });
-      }
-    });
-
-    svg.on('mouseup', () => {
-      if (linkingNode) {
-        setLinkingNode(null);
-        setTempLine(null);
-      }
-    });
-
     const initialTransform = d3.zoomIdentity
       .translate(0, 0)
       .scale(0.8);
@@ -422,6 +371,7 @@ export default function Graph({ searchTerm }: GraphProps) {
     <div className="w-full h-[calc(100vh-200px)] bg-gray-900 rounded-lg">
       <div className="absolute top-4 left-4 bg-white/80 p-2 rounded-lg text-sm">
         <p>Hold Ctrl/Cmd + Click to link nodes</p>
+        <p>Press Delete or click the red button to remove links</p>
       </div>
       <svg ref={svgRef} className="w-full h-full" />
     </div>

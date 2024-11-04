@@ -17,6 +17,7 @@ interface MindMapStore {
   addNode: (node: Node) => void;
   addLink: (source: string, target: string) => void;
   removeNode: (id: string) => void;
+  removeLink: (source: string, target: string) => void;
   updateNode: (id: string, updates: Partial<Node>) => void;
   setSelectedNode: (node: Node | null) => void;
   addNodeType: (nodeType: NodeType) => void;
@@ -43,7 +44,6 @@ export const useMindMapStore = create<MindMapStore>()(
 
       addNode: (node) =>
         set((state) => {
-          // Ensure node has required arrays initialized
           const nodeWithDefaults = {
             ...node,
             tags: node.tags || [],
@@ -52,7 +52,6 @@ export const useMindMapStore = create<MindMapStore>()(
             y: node.y || 0
           };
 
-          // Check if a node with same text (case insensitive) exists
           if (state.nodes.some((n) => 
             n.text.toLowerCase() === node.text.toLowerCase() ||
             (n.synonyms || []).some(s => s.toLowerCase() === node.text.toLowerCase())
@@ -81,6 +80,13 @@ export const useMindMapStore = create<MindMapStore>()(
           };
         }),
 
+      removeLink: (source, target) =>
+        set((state) => ({
+          links: state.links.filter(
+            (l) => !(l.source === source && l.target === target)
+          ),
+        })),
+
       removeNode: (id) =>
         set((state) => {
           const updatedNodes = state.nodes.filter((n) => n.id !== id);
@@ -96,7 +102,6 @@ export const useMindMapStore = create<MindMapStore>()(
 
       updateNode: (id, updates) =>
         set((state) => {
-          // If updating text, check for duplicates (case insensitive)
           if (updates.text) {
             const existingNode = state.nodes.find(n => 
               n.id !== id && 
@@ -106,7 +111,6 @@ export const useMindMapStore = create<MindMapStore>()(
             if (existingNode) return state;
           }
 
-          // Ensure arrays are properly initialized when updating
           const sanitizedUpdates = {
             ...updates,
             tags: updates.tags || [],
@@ -229,11 +233,9 @@ export const exportMindMapData = () => {
 export const importMindMapData = (data: GraphData) => {
   const store = useMindMapStore.getState();
   
-  // Clear existing data
   store.nodes.length = 0;
   store.links.length = 0;
   
-  // Import nodes with positions and ensure arrays are initialized
   data.nodes.forEach(node => {
     store.addNode({
       ...node,
@@ -244,7 +246,6 @@ export const importMindMapData = (data: GraphData) => {
     });
   });
   
-  // Import only valid links
   data.links.forEach(link => {
     if (data.nodes.some(n => n.id === link.source) && 
         data.nodes.some(n => n.id === link.target)) {
