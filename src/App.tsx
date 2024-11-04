@@ -3,8 +3,11 @@ import Graph from './components/Graph';
 import NodePanel from './components/NodePanel';
 import NodeDetails from './components/NodeDetails';
 import { Brain } from 'lucide-react';
+import { useState } from 'react';
 
 function App() {
+  const [searchTerm, setSearchTerm] = useState('');
+
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white shadow-sm">
@@ -19,10 +22,10 @@ function App() {
       <main className="max-w-full mx-auto p-6">
         <div className="flex gap-6">
           <div className="w-1/3 flex flex-col gap-6">
-            <NodePanel />
+            <NodePanel onSearch={setSearchTerm} />
           </div>
           <div className="w-2/3">
-            <Graph />
+            <Graph searchTerm={searchTerm} />
           </div>
         </div>
       </main>

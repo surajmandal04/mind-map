@@ -13,10 +13,15 @@ const NODE_SPACING_Y = 150;
 const NODE_SPACING_X = 250;
 const INITIAL_OFFSET_X = 50;
 const INITIAL_OFFSET_Y = 50;
-const LEVEL_PADDING = 100; // Padding between levels
+const LEVEL_PADDING = 100;
 
-export default function Graph() {
+interface GraphProps {
+  searchTerm?: string;
+}
+
+export default function Graph({ searchTerm }: GraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
   const [linkingNode, setLinkingNode] = useState<Node | null>(null);
   const [tempLine, setTempLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -25,6 +30,63 @@ export default function Graph() {
   useEffect(() => {
     cleanupInvalidLinks();
   }, []);
+
+  // Center view on searched node
+  useEffect(() => {
+    if (!searchTerm || !svgRef.current || !zoomRef.current) return;
+
+    const searchedNode = nodes.find(node => 
+      node.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      node.synonyms?.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+    if (searchedNode && searchedNode.x !== undefined && searchedNode.y !== undefined) {
+      const svg = d3.select(svgRef.current);
+      const container = svgRef.current.parentElement;
+      if (!container) return;
+
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      // Calculate the transform to center the node
+      const scale = 0.8; // Zoom level
+      const transform = d3.zoomIdentity
+        .translate(width / 2 - searchedNode.x * scale, height / 2 - searchedNode.y * scale)
+        .scale(scale);
+
+      // Smoothly transition to the new view
+      svg.transition()
+        .duration(750)
+        .call(zoomRef.current.transform, transform);
+
+      // Highlight the searched node
+      svg.selectAll('.node')
+        .transition()
+        .duration(750)
+        .style('opacity', (d: any) => {
+          const isMatch = d.id === searchedNode.id;
+          return isMatch ? 1 : 0.4;
+        });
+
+      svg.selectAll('.link')
+        .transition()
+        .duration(750)
+        .style('opacity', 0.2);
+
+      // Reset highlighting after a delay
+      setTimeout(() => {
+        svg.selectAll('.node')
+          .transition()
+          .duration(750)
+          .style('opacity', 1);
+
+        svg.selectAll('.link')
+          .transition()
+          .duration(750)
+          .style('opacity', 0.6);
+      }, 2000);
+    }
+  }, [searchTerm, nodes]);
 
   const getNodeSize = (text: string): { width: number; height: number } => {
     const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -45,20 +107,17 @@ export default function Graph() {
   const getNodeColor = (node: Node): string => {
     if (!node.tags || node.tags.length === 0) return '#6B7280';
     
-    // Generate a consistent color based on the first tag
     const tag = node.tags[0];
     const hue = Array.from(tag).reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
     return `hsl(${hue}, 70%, 45%)`;
   };
 
-  // Calculate node positions based on their relationships
   const calculateNodePositions = () => {
     const positions = new Map<string, { x: number, y: number }>();
     const nodesByLevel = new Map<number, Node[]>();
     const nodeLevels = new Map<string, number>();
     const processedNodes = new Set<string>();
     
-    // Helper function to get node level based on incoming links
     const getNodeLevel = (nodeId: string, visited = new Set<string>()): number => {
       if (visited.has(nodeId)) return 0;
       visited.add(nodeId);
@@ -70,7 +129,6 @@ export default function Graph() {
       return Math.max(...parentLevels) + 1;
     };
 
-    // First pass: Calculate levels for all nodes
     nodes.forEach(node => {
       if (!processedNodes.has(node.id)) {
         const level = getNodeLevel(node.id);
@@ -84,25 +142,19 @@ export default function Graph() {
       }
     });
 
-    // Second pass: Position nodes by level
     const maxLevel = Math.max(...Array.from(nodesByLevel.keys()));
     
     nodesByLevel.forEach((levelNodes, level) => {
-      // Sort nodes within level by their connections
       levelNodes.sort((a, b) => {
         const aConnections = links.filter(l => l.source === a.id || l.target === a.id).length;
         const bConnections = links.filter(l => l.source === b.id || l.target === b.id).length;
         return bConnections - aConnections;
       });
 
-      // Calculate vertical position for this level
       const y = INITIAL_OFFSET_Y + level * (NODE_SPACING_Y + LEVEL_PADDING);
 
-      // Position nodes horizontally within their level
       levelNodes.forEach((node, index) => {
         const x = INITIAL_OFFSET_X + index * NODE_SPACING_X;
-        
-        // Store the calculated position
         positions.set(node.id, { x, y });
       });
     });
@@ -127,7 +179,6 @@ export default function Graph() {
 
     svg.selectAll('*').remove();
 
-    // Define arrow marker
     svg.append('defs').selectAll('marker')
       .data(['arrow'])
       .join('marker')
@@ -150,14 +201,13 @@ export default function Graph() {
         g.attr('transform', event.transform);
       });
 
+    zoomRef.current = zoom;
     svg.call(zoom);
 
-    // Calculate and assign positions
     const nodePositions = calculateNodePositions();
     nodes.forEach(node => {
       const pos = nodePositions.get(node.id);
       if (pos) {
-        // Only update position if it's a new node or doesn't have a position
         if (!node.x || !node.y) {
           node.x = pos.x;
           node.y = pos.y;
@@ -165,13 +215,11 @@ export default function Graph() {
       }
     });
 
-    // Create links
     const validLinks = links.map(link => ({
       source: nodes.find(n => n.id === link.source)!,
       target: nodes.find(n => n.id === link.target)!
     }));
 
-    // Create simulation with minimal forces
     const simulation = d3.forceSimulation(nodes as d3.SimulationNodeDatum[])
       .force('link', d3.forceLink(validLinks)
         .id((d: any) => d.id)
@@ -186,7 +234,6 @@ export default function Graph() {
 
     simulationRef.current = simulation;
 
-    // Create curved links with arrows
     const link = g.selectAll('.link')
       .data(validLinks)
       .enter()
@@ -236,7 +283,6 @@ export default function Graph() {
         .on('drag', dragged)
         .on('end', dragended));
 
-    // Add drop shadow filter
     const defs = svg.append('defs');
     const filter = defs.append('filter')
       .attr('id', 'drop-shadow')
@@ -362,7 +408,6 @@ export default function Graph() {
       }
     });
 
-    // Set initial view to show top-left corner
     const initialTransform = d3.zoomIdentity
       .translate(0, 0)
       .scale(0.8);

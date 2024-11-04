@@ -4,10 +4,22 @@ import { useMindMapStore } from '../store';
 import { generateId } from '../types';
 import { exportMindMapData, importMindMapData } from '../store';
 
+interface NodePanelProps {
+  onSearch: (term: string) => void;
+}
+
 interface Suggestion {
   type: 'pattern' | 'node' | 'history' | 'markup';
   value: string;
 }
+
+const findNodeByTextOrSynonym = (nodes: any[], text: string) => {
+  const lowerText = text.toLowerCase();
+  return nodes.find(node => 
+    node.text.toLowerCase() === lowerText || 
+    (node.synonyms && node.synonyms.some(s => s.toLowerCase() === lowerText))
+  );
+};
 
 const processNodeText = (text: string) => {
   if (text.includes(':')) {
@@ -24,13 +36,9 @@ const processNodeText = (text: string) => {
 };
 
 const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
-  // Split the input by ~ to separate node text from metadata
   const [baseNodeText, ...metadataSections] = nodeText.split('~').map(p => p.trim());
-  
-  // Process the base node text for any tag:text format
   const { nodeText: finalText, tags: initialTags } = processNodeText(baseNodeText);
   
-  // Initialize metadata with existing values or defaults
   const metadata = {
     text: finalText,
     tags: [...(existingNode?.tags || []), ...initialTags],
@@ -38,7 +46,6 @@ const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
     synonyms: [...(existingNode?.synonyms || [])]
   };
 
-  // Process all metadata sections
   metadataSections.forEach(section => {
     if (!section.includes('@')) return;
 
@@ -61,13 +68,15 @@ const processNodeMetadata = (nodeText: string, existingNode: any = null) => {
   return metadata;
 };
 
-function NodePanel() {
+function NodePanel({ onSearch }: NodePanelProps) {
   const [input, setInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [linkingFrom, setLinkingFrom] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
 
   const { 
     nodes, 
@@ -80,12 +89,20 @@ function NodePanel() {
   } = useMindMapStore();
 
   useEffect(() => {
+    onSearch(searchTerm);
+  }, [searchTerm, onSearch]);
+
+  useEffect(() => {
     if (input && showSuggestions) {
       const lowerInput = input.toLowerCase();
       
-      const nodeSuggestions = nodes
-        .filter(node => node.text.toLowerCase().includes(lowerInput))
-        .map(node => ({ type: 'node' as const, value: node.text }));
+      const nodeSuggestions = nodes.flatMap(node => {
+        const suggestions = [{ type: 'node' as const, value: node.text }];
+        if (node.synonyms) {
+          suggestions.push(...node.synonyms.map(synonym => ({ type: 'node' as const, value: synonym })));
+        }
+        return suggestions;
+      }).filter(suggestion => suggestion.value.toLowerCase().includes(lowerInput));
 
       const historySuggestions = nodeHistory.nodeTexts
         .filter(text => text.toLowerCase().includes(lowerInput))
@@ -106,14 +123,58 @@ function NodePanel() {
       );
 
       setSuggestions(uniqueSuggestions);
+      setSelectedSuggestionIndex(-1);
     } else {
       setSuggestions([]);
+      setSelectedSuggestionIndex(-1);
     }
   }, [input, nodes, nodeHistory, showSuggestions]);
+
+  useEffect(() => {
+    if (selectedSuggestionIndex >= 0 && suggestionsRef.current) {
+      const suggestionElements = suggestionsRef.current.children;
+      if (suggestionElements[selectedSuggestionIndex]) {
+        suggestionElements[selectedSuggestionIndex].scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [selectedSuggestionIndex]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSuggestions && suggestions.length > 0) {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          setSelectedSuggestionIndex(prev => 
+            prev < suggestions.length - 1 ? prev + 1 : prev
+          );
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          setSelectedSuggestionIndex(prev => 
+            prev > 0 ? prev - 1 : prev
+          );
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (selectedSuggestionIndex >= 0) {
+            handleSuggestionClick(suggestions[selectedSuggestionIndex]);
+          }
+          break;
+        case 'Escape':
+          setShowSuggestions(false);
+          setSelectedSuggestionIndex(-1);
+          break;
+      }
+    }
+  };
 
   const handleSuggestionClick = (suggestion: Suggestion) => {
     setInput(suggestion.value);
     setShowSuggestions(false);
+    setSelectedSuggestionIndex(-1);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
@@ -126,11 +187,10 @@ function NodePanel() {
     
     lines.forEach(line => {
       if (line.includes('->')) {
-        // Handle linked nodes
         const parts = line.split('->').map(p => p.trim());
         const createdNodes = parts.map(part => {
           const metadata = processNodeMetadata(part);
-          let existingNode = nodes.find(n => n.text.toLowerCase() === metadata.text.toLowerCase());
+          let existingNode = findNodeByTextOrSynonym(nodes, metadata.text);
           
           if (!existingNode) {
             const newNode = {
@@ -145,7 +205,6 @@ function NodePanel() {
             addNode(newNode);
             return newNode;
           } else {
-            // Update existing node with new metadata
             const updates = {
               tags: [...new Set([...(existingNode.tags || []), ...metadata.tags])],
               details: metadata.details || existingNode.details,
@@ -156,14 +215,12 @@ function NodePanel() {
           }
         });
 
-        // Create links between nodes
         for (let i = 0; i < createdNodes.length - 1; i++) {
           addLink(createdNodes[i].id, createdNodes[i + 1].id);
         }
       } else {
-        // Handle single node
         const metadata = processNodeMetadata(line);
-        let existingNode = nodes.find(n => n.text.toLowerCase() === metadata.text.toLowerCase());
+        let existingNode = findNodeByTextOrSynonym(nodes, metadata.text);
         
         if (!existingNode) {
           addNode({
@@ -176,7 +233,6 @@ function NodePanel() {
             y: 0
           });
         } else {
-          // Update existing node with new metadata
           const updates = {
             tags: [...new Set([...(existingNode.tags || []), ...metadata.tags])],
             details: metadata.details || existingNode.details,
@@ -289,17 +345,23 @@ function NodePanel() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={() => setShowSuggestions(true)}
+              onKeyDown={handleKeyDown}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
               placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple')"
               rows={4}
               className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-y-auto">
+              <div 
+                ref={suggestionsRef}
+                className="absolute z-10 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-40 overflow-y-auto"
+              >
                 {suggestions.map((suggestion, index) => (
                   <div
                     key={index}
-                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center"
+                    className={`px-4 py-2 cursor-pointer flex items-center ${
+                      index === selectedSuggestionIndex ? 'bg-blue-50' : 'hover:bg-gray-100'
+                    }`}
                     onClick={() => handleSuggestionClick(suggestion)}
                   >
                     <span className="text-sm text-gray-600 mr-2">
