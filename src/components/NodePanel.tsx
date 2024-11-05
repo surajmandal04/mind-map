@@ -80,8 +80,10 @@ function NodePanel({ onSearch }: NodePanelProps) {
 
   const { 
     nodes, 
+    links,
     addNode, 
     addLink,
+    removeLink,
     updateNode,
     setSelectedNode,
     nodeHistory,
@@ -186,7 +188,23 @@ function NodePanel({ onSearch }: NodePanelProps) {
     const lines = input.split('\n').filter(line => line.trim());
     
     lines.forEach(line => {
-      if (line.includes('->')) {
+      if (line.includes('---')) {
+        // Handle link deletion
+        const [sourceText, targetText] = line.split('---').map(p => p.trim());
+        const sourceNode = findNodeByTextOrSynonym(nodes, sourceText);
+        const targetNode = findNodeByTextOrSynonym(nodes, targetText);
+        
+        if (sourceNode && targetNode) {
+          const existingLink = links.find(
+            link => (link.source === sourceNode.id && link.target === targetNode.id) ||
+                   (link.source === targetNode.id && link.target === sourceNode.id)
+          );
+          
+          if (existingLink) {
+            removeLink(existingLink.source, existingLink.target);
+          }
+        }
+      } else if (line.includes('->')) {
         const parts = line.split('->').map(p => p.trim());
         const createdNodes = parts.map(part => {
           const metadata = processNodeMetadata(part);
@@ -347,7 +365,7 @@ function NodePanel({ onSearch }: NodePanelProps) {
               onFocus={() => setShowSuggestions(true)}
               onKeyDown={handleKeyDown}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple')"
+              placeholder="Add node (e.g., 'fruit -> condition:rotten -> bad apple') or remove link (e.g., 'node1---node2')"
               rows={4}
               className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -379,7 +397,7 @@ function NodePanel({ onSearch }: NodePanelProps) {
             className="w-full bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-center gap-2"
           >
             <PlusCircle className="w-5 h-5" />
-            Add Node
+            Add Node or Update Links
           </button>
         </form>
       </div>
